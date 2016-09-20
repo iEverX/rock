@@ -31,13 +31,13 @@ struct Request {
 impl Request {
     fn parse(stream: &mut TcpStream) -> Option<Request> {
         let mut s = Vec::new();
-        Request::get_request(stream, &mut s);        
+        Self::get_request(stream, &mut s);
         match String::from_utf8(s) {
             Ok(s) => {
                 let mut lines = s.split("\r\n");
                 let values: Vec<_> = get!(lines.next()).split(' ').collect();
                 if values.len() == 3 {
-                    let headers: HashMap<_,_> = lines.flat_map(Request::parse_header).collect();
+                    let headers: HashMap<_,_> = lines.flat_map(Self::parse_header).collect();
                     Some(Request {
                         method: values[0].to_string(),
                         path: values[1].to_string(),
@@ -64,7 +64,6 @@ impl Request {
         Some((header.to_string(), value.to_string()))
     }
 
-
     fn get_request(stream: &mut TcpStream, r: &mut Vec<u8>) {
         const CHUNK_SIZE: usize = 4096;
         let mut buf = [0; CHUNK_SIZE];
@@ -77,9 +76,41 @@ impl Request {
     }
 }
 
-struct Response;
+struct Response {
+    head: String,
+    body: String
+}
 
 impl Response {
+
+    fn new(code: u16, mime: &str, content: String) -> Response {
+        Self::with_header_body(Self::header(code, mime, content.chars().count()), content)
+    }
+
+    fn with_header_body(head: String, body: String) -> Response {
+        Response {
+            head: head,
+            body: body
+        }
+    }
+
+    fn code404() -> Response {
+        let body = "<html><head><title>404 Not Found</title></head><body>404 Not Found</body></html>";
+        Self::with_header_body(Self::header(404, "text/html", body.chars().count()), body.to_string())
+    }
+
+    fn code501() -> Response {
+        let body = "<html><head><title>501 Not Implemented</title></head><body>501 Not Implemented</body></html>";
+        Self::with_header_body(Self::header(501, "text/html", body.chars().count()), body.to_string())
+    }
+
+    fn send(self, mut stream: TcpStream) {
+        match write!(stream, "{}\r\n\r\n{}", self.head, self.body) {
+            Err(e) => println!("Response error: {}", e),
+            _ => {},
+        }
+    }
+
     fn header(code: u16, mime: &str, length: usize) -> String {
         let m = match code {
             200 => "OK",
@@ -88,28 +119,6 @@ impl Response {
         };
         format!("HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}",
             code, m, mime, length)
-    }
-
-    fn make(code: u16, mime: &str, content: &String) -> String {
-        let header = Self::header(code, mime, content.chars().count());
-        format!("{}\r\n\r\n{}", header, *content)
-    }
-
-    fn send(mut stream: TcpStream, code: u16, mime: &str, content: &String) {
-        match write!(stream, "{}", Self::make(code, mime, content)) {
-            Err(e) => println!("Response error: {}", e),
-            _ => {},
-        }
-    }
-
-    fn send_not_found(stream: TcpStream) {
-        let body = "<html><head><title>404 Not Found</title></head><body>404 Not Found</body></html>";
-        Self::send(stream, 404, "text/html", &body.to_string());
-    }
-
-    fn send_not_implemented(stream: TcpStream) {
-        let body = "<html><head><title>501 Not Implemented</title></head><body>501 Not Implemented</body></html>";
-        Self::send(stream, 404, "text/html", &body.to_string());
     }
 }
 
@@ -136,7 +145,7 @@ impl Rock {
                 for stream in listener.incoming() {
                     match stream {
                         Err(e) => {
-                            println!("Accept erro {}", e);
+                            println!("Accept error {}", e);
                         },
                         Ok(s) => {
                             let shared = rock.clone();
@@ -158,7 +167,7 @@ impl Rock {
             match req.method.as_str() {
                 "GET" => self.serve_static(stream, &req.path),
                 "HEAD" => self.serve_static(stream, &req.path),
-                _ => Response::send_not_implemented(stream),
+                _ => Response::code501().send(stream),
             }
         }
     }
@@ -176,15 +185,15 @@ impl Rock {
                     Ok(mut file) => {
                         let mut body = String::new();
                         file.read_to_string(&mut body).unwrap();
-                        Response::send(stream, 200, "text/html", &body);
+                        Response::new(200, "text/html", body).send(stream);
                     },
                     Err(_) => {
-                        Response::send_not_found(stream);
+                        Response::code404().send(stream);
                     }
                 }
             }, 
             None => {
-                Response::send_not_found(stream);
+                Response::code404().send(stream);
             }
         }
     }
