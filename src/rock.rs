@@ -37,7 +37,7 @@ impl Request {
                 let mut lines = s.split("\r\n");
                 let values: Vec<_> = get!(lines.next()).split(' ').collect();
                 if values.len() == 3 {
-                    let headers: HashMap<_,_> = lines.flat_map(Self::parse_header).collect();
+                    let headers: HashMap<_, _> = lines.flat_map(Self::parse_header).collect();
                     Some(Request {
                         method: values[0].to_string(),
                         path: values[1].to_string(),
@@ -53,8 +53,8 @@ impl Request {
     }
 
     fn log(&self) {
-        println!("{} - {} {}", Local::now().format("%Y-%m-%d %H:%M:%S"), 
-            self.method,  self.path);
+        println!("{} - {} {}", Local::now().format("%Y-%m-%d %H:%M:%S"),
+                 self.method, self.path);
     }
 
     fn parse_header(line: &str) -> Option<(String, String)> {
@@ -82,7 +82,6 @@ struct Response {
 }
 
 impl Response {
-
     fn new(code: u16, mime: &str, content: String) -> Response {
         Self::with_header_body(Self::header(code, mime, content.chars().count()), content)
     }
@@ -118,7 +117,7 @@ impl Response {
             _ => "Not Implemented"
         };
         format!("HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}",
-            code, m, mime, length)
+                code, m, mime, length)
     }
 }
 
@@ -191,7 +190,7 @@ impl Rock {
                         Response::code404().send(stream);
                     }
                 }
-            }, 
+            },
             None => {
                 Response::code404().send(stream);
             }
