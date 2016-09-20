@@ -35,9 +35,7 @@ impl Request {
         match String::from_utf8(s) {
             Ok(s) => {
                 let mut lines = s.split("\r\n");
-                let request_line = get!(lines.next());
-                let mut it = request_line.split(' ');
-                let values: Vec<_> = it.collect();
+                let values: Vec<_> = get!(lines.next()).split(' ').collect();
                 if values.len() == 3 {
                     let headers: HashMap<_,_> = lines.flat_map(parse_header).collect();
                     Some(Request {
@@ -108,7 +106,10 @@ fn send_404(stream: TcpStream) {
 }
 
 fn send_response(mut stream: TcpStream, code: u16, mime: &str, content: &String) {
-    write!(stream, "{}", make_response(code, mime, content));
+    match write!(stream, "{}", make_response(code, mime, content)) {
+        Err(e) => println!("Response error: {}", e),
+        _ => {},
+    }
 }
 
 fn serve_static(rock: Arc<Rock>, stream: TcpStream, path: &String) {
