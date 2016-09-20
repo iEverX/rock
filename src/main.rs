@@ -1,6 +1,5 @@
 mod rock;
 mod config;
-use std::env;
 use std::str::FromStr;
 
 fn main() {

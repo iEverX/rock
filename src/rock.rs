@@ -1,5 +1,4 @@
 extern crate chrono;
-use config;
 
 use std::sync::Arc;
 use std::net::*;
@@ -11,6 +10,17 @@ use std::path::PathBuf;
 use std::fs::File;
 use self::chrono::Local;
 
+use config;
+
+macro_rules! get {
+    ( $expr : expr ) => {
+        match $expr {
+            Some(v) => v,
+            None => return None,
+        }
+    }
+}
+
 struct Request {
     method: String,
     path: String,
@@ -21,27 +31,32 @@ struct Request {
 impl Request {
     fn parse(stream: &mut TcpStream) -> Option<Request> {
         let mut s = Vec::new();
-        get_request(stream, &mut s);
-        if let Ok(s) = String::from_utf8(s) {
-            let mut lines = s.split("\r\n");
-            if let Some(request_line) = lines.next() {
+        get_request(stream, &mut s);        
+        match String::from_utf8(s) {
+            Ok(s) => {
+                let mut lines = s.split("\r\n");
+                let request_line = get!(lines.next());
                 let mut it = request_line.split(' ');
                 let values: Vec<_> = it.collect();
-                let headers: HashMap<_,_> = lines.flat_map(parse_header).collect();
-                return Some(Request {
-                    method: values[0].to_string(),
-                    path: values[1].to_string(),
-                    version: values[2].to_string(),
-                    headers: headers,
-                });
-            }
+                if values.len() == 3 {
+                    let headers: HashMap<_,_> = lines.flat_map(parse_header).collect();
+                    Some(Request {
+                        method: values[0].to_string(),
+                        path: values[1].to_string(),
+                        version: values[2].to_string(),
+                        headers: headers,
+                    })
+                } else {
+                    None
+                }
+            },
+            Err(_) => None,
         }
-        None
     }
 
     fn log(&self) {
-        println!("{} - {} {}{}", Local::now().format("%Y-%m-%d %H:%M:%S"), 
-            self.method, self.headers.get("Host").unwrap(), self.path);
+        println!("{} - {} {}", Local::now().format("%Y-%m-%d %H:%M:%S"), 
+            self.method,  self.path);
     }
 }
 
@@ -51,19 +66,16 @@ fn get_request(stream: &mut TcpStream, r: &mut Vec<u8>) {
     while let Ok(n) = stream.read(&mut buf) {
         r.extend_from_slice(&buf[0..n]);
         if n != CHUNK_SIZE {
-            break;
+            return;
         }
     }
 }
 
 fn parse_header(line: &str) -> Option<(String, String)> {
     let mut it = line.splitn(2, ": ");
-    if let Some(header) = it.next() {
-        if let Some(value) = it.next() {
-            return Some((header.to_string(), value.to_string()));
-        }
-    }
-    None
+    let header = get!(it.next());
+    let value = get!(it.next());
+    Some((header.to_string(), value.to_string()))
 }
 
 pub struct Rock {
@@ -76,49 +88,55 @@ fn handle_client(rock: Arc<Rock>, mut stream: TcpStream) {
     if let Some(req) = Request::parse(&mut stream) {
         req.log();
         serve_static(rock, stream, &req.path);
-        // let body = "<html><head><title>Error</title></head><body>body failed</body></html>";
-        // write!(stream, "HTTP/1.0 {} {}\r\n", 200, "OK");
-        // write!(stream, "Content-type: text/html\r\n");
-        // write!(stream, "Content-length: {}\r\n\r\n", body.chars().count());    
-        // write!(stream, "{}", body);
     }
 }
 
+fn make_response(code: u16, mime: &str, content: &String) -> String {
+    let m = match code {
+        200 => "OK",
+        404 => "Not Found",
+        _ => "Not Implemented"
+    };
+    format!("HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n{}",
+        code, m, mime, content.chars().count(), *content)
+}
 
-fn serve_static(rock: Arc<Rock>, mut stream: TcpStream, path: &String) {
+
+fn send_404(stream: TcpStream) {
+    let body = format!("<html><head><title>404 Not Found</title></head><body>{}</body></html>", "404 Not Found");
+    send_response(stream, 404, "text/html", &body);
+}
+
+fn send_response(mut stream: TcpStream, code: u16, mime: &str, content: &String) {
+    write!(stream, "{}", make_response(code, mime, content));
+}
+
+fn serve_static(rock: Arc<Rock>, stream: TcpStream, path: &String) {
     let mut buf = PathBuf::from(&rock.config.root);
-    buf.push(path.chars().skip(1).collect::<String>());
+    let p = match path.chars().count() {
+        1 => "index.html".to_string(),
+        _ => path.chars().skip(1).collect(),
+    };
+    buf.push(p);
     match buf.as_path().to_str() {
         Some(path) => {
             match File::open(path) {
                 Ok(mut file) => {
                     let mut body = String::new();
-                    let size = file.read_to_string(&mut body).unwrap();
-                    write!(stream, "HTTP/1.1 {} {}\r\n", 200, "OK");
-                    write!(stream, "Content-type: text/html\r\n");
-                    write!(stream, "Content-length: {}\r\n\r\n", size);    
-                    write!(stream, "{}", body);
+                    file.read_to_string(&mut body).unwrap();
+                    send_response(stream, 200, "text/html", &body);
                 },
-                Err(e) => {
-                    let body = format!("<html><head><title>Error</title></head><body>{}</body></html>", "404 Not Found");
-                    write!(stream, "HTTP/1.1 {} {}\r\n", 200, "OK");
-                    write!(stream, "Content-type: text/html\r\n");
-                    write!(stream, "Content-length: {}\r\n\r\n", body.chars().count());    
-                    write!(stream, "{}", body);
+                Err(_) => {
+                    send_404(stream);
                 }
             }
         }, 
         None => {
-            let body = format!("<html><head><title>Error</title></head><body>{}</body></html>", "404 Not Found");
-            write!(stream, "HTTP/1.1 {} {}\r\n", 200, "OK");
-            write!(stream, "Content-type: text/html\r\n");
-            write!(stream, "Content-length: {}\r\n\r\n", body.chars().count());    
-            write!(stream, "{}", body);
+            send_404(stream);
         }
     }
-
-    
 }
+
 
 impl Rock {
     pub fn new(c: config::RockConfig) -> Rock {
@@ -130,6 +148,7 @@ impl Rock {
     }
 
     pub fn start(self) {
+        println!("Start listening at {}:{}", &self.host[..], self.port);
         let rock: Arc<Rock> = Arc::new(self);
         match TcpListener::bind((&rock.host[..], rock.port)) {
             Ok(listener) => {
