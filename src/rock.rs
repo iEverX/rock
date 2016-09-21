@@ -83,10 +83,10 @@ struct Response {
 
 impl Response {
     fn new(code: u16, mime: &str, content: String) -> Response {
-        Self::with_header_body(Self::header(code, mime, content.chars().count()), content)
+        Self::with_head_body(Self::header(code, mime, content.chars().count()), content)
     }
 
-    fn with_header_body(head: String, body: String) -> Response {
+    fn with_head_body(head: String, body: String) -> Response {
         Response {
             head: head,
             body: body
@@ -95,16 +95,23 @@ impl Response {
 
     fn code404() -> Response {
         let body = "<html><head><title>404 Not Found</title></head><body>404 Not Found</body></html>";
-        Self::with_header_body(Self::header(404, "text/html", body.chars().count()), body.to_string())
+        Self::with_head_body(Self::header(404, "text/html", body.chars().count()), body.to_string())
     }
 
     fn code501() -> Response {
         let body = "<html><head><title>501 Not Implemented</title></head><body>501 Not Implemented</body></html>";
-        Self::with_header_body(Self::header(501, "text/html", body.chars().count()), body.to_string())
+        Self::with_head_body(Self::header(501, "text/html", body.chars().count()), body.to_string())
     }
 
     fn send(self, mut stream: TcpStream) {
-        match write!(stream, "{}\r\n\r\n{}", self.head, self.body) {
+        match write!(stream, "{}\r\n{}", self.head, self.body) {
+            Err(e) => println!("Response error: {}", e),
+            _ => {},
+        }
+    }
+
+    fn send_head(self, mut stream: TcpStream) {
+        match write!(stream, "{}", self.head) {
             Err(e) => println!("Response error: {}", e),
             _ => {},
         }
@@ -116,7 +123,7 @@ impl Response {
             404 => "Not Found",
             _ => "Not Implemented"
         };
-        format!("HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}",
+        format!("HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n",
                 code, m, mime, length)
     }
 }
@@ -163,15 +170,19 @@ impl Rock {
     fn handle_client(&self, mut stream: TcpStream) {
         if let Some(req) = Request::parse(&mut stream) {
             req.log();
-            match req.method.as_str() {
-                "GET" => self.serve_static(stream, &req.path),
-                "HEAD" => self.serve_static(stream, &req.path),
-                _ => Response::code501().send(stream),
-            }
+            self.serve(stream, req);
         }
     }
 
-    fn serve_static(&self, stream: TcpStream, path: &String) {
+    fn serve(&self, stream: TcpStream, req: Request) {
+        match req.method.as_str() {
+            "GET" => self.static_response(&req.path).send(stream),
+            "HEAD" => self.static_response(&req.path).send_head(stream),
+            _ => Response::code501().send(stream),
+        }
+    }
+
+    fn static_response(&self, path: &String) -> Response {
         let mut buf = PathBuf::from(&self.config.root);
         let p = match path.chars().count() {
             1 => "index.html".to_string(),
@@ -184,15 +195,15 @@ impl Rock {
                     Ok(mut file) => {
                         let mut body = String::new();
                         file.read_to_string(&mut body).unwrap();
-                        Response::new(200, "text/html", body).send(stream);
+                        Response::new(200, "text/html", body)
                     },
                     Err(_) => {
-                        Response::code404().send(stream);
+                        Response::code404()
                     }
                 }
             },
             None => {
-                Response::code404().send(stream);
+                Response::code404()
             }
         }
     }
