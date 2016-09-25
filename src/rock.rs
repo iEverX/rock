@@ -58,7 +58,6 @@ impl Request {
     fn log(&self) {
         println!("{} - {} {}", Local::now().format("%Y-%m-%d %H:%M:%S"),
                  self.method, self.path);
-        println!("{:?}", self.query);
     }
 
     fn parse_resource(resource: &str) -> (String, Option<HashMap<String, String>>) {
