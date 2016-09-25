@@ -26,6 +26,7 @@ struct Request {
     path: String,
     version: String,
     headers: HashMap<String, String>,
+    query: Option<HashMap<String, String>>,
 }
 
 impl Request {
@@ -37,12 +38,14 @@ impl Request {
                 let mut lines = s.split("\r\n");
                 let values: Vec<_> = get!(lines.next()).split(' ').collect();
                 if values.len() == 3 {
+                    let (path, query) = Self::parse_resource(values[1]);
                     let headers: HashMap<_, _> = lines.flat_map(Self::parse_header).collect();
                     Some(Request {
                         method: values[0].to_string(),
-                        path: values[1].to_string(),
+                        path: path,
                         version: values[2].to_string(),
                         headers: headers,
+                        query: query,
                     })
                 } else {
                     None
@@ -55,6 +58,34 @@ impl Request {
     fn log(&self) {
         println!("{} - {} {}", Local::now().format("%Y-%m-%d %H:%M:%S"),
                  self.method, self.path);
+        println!("{:?}", self.query);
+    }
+
+    fn parse_resource(resource: &str) -> (String, Option<HashMap<String, String>>) {
+        let parts: Vec<_> = resource.splitn(2, '?').collect();
+        if parts.len() == 1 || parts[1].trim().chars().count() == 0 {
+            (parts[0].to_string(), None)
+        } else {
+            (parts[0].to_string(), Self::parse_query(parts[1]))
+        }
+    }
+
+    fn parse_query(q: &str) -> Option<HashMap<String, String>> {
+        let mut query: HashMap<String, String> = HashMap::new();
+        let mut it = q.split('&');
+        while let Some(kv) = it.next() {
+            let mut it = kv.split('=');
+            if let Some(k) = it.next() {
+                if let Some(v) = it.next() {
+                    query.insert(k.to_string(), v.to_string());
+                }
+            }
+        }
+        if query.is_empty() {
+            None
+        } else {
+            Some(query)
+        }
     }
 
     fn parse_header(line: &str) -> Option<(String, String)> {
